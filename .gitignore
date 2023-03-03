@@ -5,7 +5,7 @@ logs/
 output/
 test/
 wandb/
- SAM/..git/
+SAM/..git/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
