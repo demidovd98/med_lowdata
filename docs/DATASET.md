@@ -10,10 +10,6 @@ Please download the datasets from the official corresponding websites and make s
 
 [Download page](https://zenodo.org/record/53169#.ZAE0WXbP1Eb).
 
-/l/users/20020067/Datasets/CRC_colorectal_cancer_histology/Kather_texture_2016_image_tiles_5000/all/1A1F_CRC-Prim-HE-08_024.tif_Row_1651_Col_151.tif
-
-/l/users/20020067/Datasets/CRC_colorectal_cancer_histology/low_data/50_50/3way_splits/1/train_1_sp1.txt
-
 Directory tree:
 ```bash
 CRC_colorectal_cancer_histology/
