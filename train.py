@@ -452,10 +452,31 @@ def train(args, model, classifier=None, num_classes=None):
                         nesterov= True, # True
                         )
             
-            milestones = [6000, 12000, 18000, 24000, 30000]
-            #milestones = [8000, 16000, 24000, 36000, 40000]
-            #milestones = [10000, 20000, 30000, 40000]
-            
+            #milestones = [6000, 12000, 18000, 24000, 30000]
+
+            milestones = [ int(args.num_steps * 0.5),
+                        int(args.num_steps * 0.75),
+                        int(args.num_steps * 0.90),
+                        int(args.num_steps * 0.95),
+                        int(args.num_steps * 1.0) ]
+
+            '''
+            if args.num_steps <= 5000:
+                milestones = [4000]
+            elif args.num_steps <= 10000:
+                milestones = [6000, 9000]
+            elif args.num_steps <= 20000:
+                milestones = [ int((args.num_steps/5) * 1), 
+                            int((args.num_steps/5) * 2), 
+                            int((args.num_steps/5) * 3), 
+                            int((args.num_steps/5) * 4), 
+                            int((args.num_steps/5) * 5) ]
+            else:
+                milestones = [6000, 12000, 18000, 24000, 30000]
+            '''
+
+            print("[INFO] Milestones for the lr scheduler are:", milestones)
+
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones, gamma=0.1)
 
         else:
