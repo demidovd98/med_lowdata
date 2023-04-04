@@ -3,9 +3,13 @@ models/pre_trained/
 U2Net/
 logs/
 output/
+results/
+run/
 test/
 wandb/
 SAM/..git/
+
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

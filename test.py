@@ -114,6 +114,11 @@ def setup(args):
         num_classes=10
     elif args.dataset == 'CRC':
         num_classes = 8
+        args.pretrained_dir = "output/CRC_rn50_vanilla_stepAuto_224x192_bs32_lr001_10k_20sp3_checkpoint.bin"
+
+
+    print("[INFO] Pre-trained model used: ", args.pretrained_dir)
+
 
     if args.split is not None:
         print(f"[INFO] A {args.split} split is used")
@@ -150,8 +155,13 @@ def setup(args):
         print("[INFO] A pre-trained ResNet-50 model is used")
 
 
+    model.load_state_dict(torch.load(args.pretrained_dir, map_location=torch.device('cpu')))
+
+
     if SAM_check:
         model.to(args.device)
+        model.eval()
+
         classifier.to(args.device)
         #print(model)
         #print(classifier)
@@ -161,9 +171,11 @@ def setup(args):
     
     else:
         model.to(args.device)
+        model.eval()
+
         num_params = count_parameters(model)
 
-        save_model(args, model)
+        #save_model(args, model)
         #print(model)
 
         #logger.info("{}".format(config))
@@ -297,12 +309,12 @@ def train(args, model, classifier=None, num_classes=None):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    train_loader, test_loader = get_loader(args)
+    test_loader = get_loader(args)
 
     # Prepare optimizer and scheduler
 
     #optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.999), weight_decay=args.weight_decay)
-
+    '''
     SAM_check = False #True
     if SAM_check:
         optimizer = torch.optim.SGD(model.parameters(), 
@@ -331,14 +343,16 @@ def train(args, model, classifier=None, num_classes=None):
                     nesterov=True)
         milestones = [6000, 12000, 18000, 24000, 30000]
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones, gamma=0.1)
-    
+    '''
+
     t_total = args.num_steps 
-    
+    '''
     if args.fp16:
         model, optimizer = amp.initialize(models=model,
                                           optimizers=optimizer,
                                           opt_level=args.fp16_opt_level)
         amp._amp_state.loss_scalers[0]._loss_scale = 2**20
+    '''
 
     # Distributed training
     if args.local_rank != -1:
@@ -346,184 +360,30 @@ def train(args, model, classifier=None, num_classes=None):
 
     # Train!
     start_time = time.time()
-    logger.info("***** Running training *****")
+    logger.info("***** Running testing *****")
     logger.info("  Total optimization steps = %d", args.num_steps)
-    logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
-    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
-                args.train_batch_size * args.gradient_accumulation_steps * (
-                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
-    logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
+    # logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
+    # logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+    #             args.train_batch_size * args.gradient_accumulation_steps * (
+    #                 torch.distributed.get_world_size() if args.local_rank != -1 else 1))
+    # logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
 
-    model.zero_grad()
+    #model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
-    losses = AverageMeter()
+    #losses = AverageMeter()
     global_step, best_acc = 0, 0
-
-    while True:
-        SAM_check = False #True
-        if SAM_check:
-            model.train(True)
-            classifier.train(True)
-            #optimizer.zero_grad()
-        else:
-            model.train()
-
-        epoch_iterator = tqdm(train_loader,
-                              desc="Training (X / X Steps) (loss=X.X)",
-                              bar_format="{l_bar}{r_bar}",
-                              dynamic_ncols=True,
-                              disable=args.local_rank not in [-1, 0])
-
-        all_preds, all_label = [], []
-
-        for step, batch in enumerate(epoch_iterator):
-            batch = tuple(t.to(args.device) for t in batch)
-
-            crop_only = args.vanilla # False
-            double_crop = False # True
-
-            if double_crop:
-                x, x_crop, x_crop2, y = batch
-            else:
-                if crop_only:
-                    x, y = batch
-                else:
-                    x, x_crop, y = batch
-
-            loss_fct = torch.nn.CrossEntropyLoss()
-            
-            split_sep = args.split.split('_') #()
-            if int(split_sep[0]) >= 10:
-                refine_loss_criterion = torch.nn.CrossEntropyLoss()
-            else:
-                refine_loss_criterion = FocalLoss()
-
-            SAM_check = False #True
-            if SAM_check:
-                feat_labeled = model(x)[0] 
-                logits = classifier(feat_labeled.cuda())[0]  #feat_labeled/bp_out_feat
-
-                if not crop_only:
-                    feat_labeled_crop = model(x_crop)[0]
-                    logits_crop = classifier(feat_labeled_crop.cuda())[0] #feat_labeled/bp_out_feat
-                    ce_loss = loss_fct(logits.view(-1, num_classes), y.view(-1))
-                    refine_loss = refine_loss_criterion(logits_crop.view(-1, num_classes), logits.argmax(dim=1).view(-1))  #.view(-1, self.num_classes)) #.long())
-
-                    if torch.isinf(refine_loss):
-                        print("[INFO]: Skip Refine Loss")
-                        loss = ce_loss
-                    else:
-                        loss = (0.5 * ce_loss) + (0.5 * refine_loss * 0.1) #0.01
-
-                    if (step % 50 == 0): print("[INFO]: ce loss:", ce_loss.item(), "Refine loss:", refine_loss.item(), "Final loss:", loss.item())
-
-                else:
-                    ce_loss = loss_fct(logits.view(-1, num_classes), y.view(-1))
-                    loss = ce_loss
-
-            else:
-                logits = model(x)
-
-                if not crop_only:
-                    logits_crop = model(x_crop)
-
-                    ce_loss = loss_fct(logits.view(-1, num_classes), y.view(-1))
-                    #ce_loss = loss_fct(logits, y)
-
-                    refine_loss = refine_loss_criterion(logits_crop.view(-1, num_classes), logits.argmax(dim=1).view(-1))  #.view(-1, self.num_classes)) #.long())
-                    #refine_loss = refine_loss_criterion(logits_crop, logits.argmax(dim=1))  #.view(-1, self.num_classes)) #.long())
-
-                    if torch.isinf(refine_loss):
-                        print("[INFO]: Skip Refine Loss")
-                        loss = ce_loss
-                    else:
-                        loss = (0.5 * ce_loss) + (0.5 * refine_loss * 0.1) #0.01
-
-                    if (step % 50 == 0): print("[INFO]: ce loss:", ce_loss.item(), "Refine loss:", refine_loss.item(), "Final loss:", loss.item())
-
-                else:
-                    ce_loss = loss_fct(logits.view(-1, num_classes), y.view(-1))
-                    loss = ce_loss
-
-            #loss = loss.mean() # for contrastive learning
-
-            preds = torch.argmax(logits, dim=-1)
-
-            if len(all_preds) == 0:
-                all_preds.append(preds.detach().cpu().numpy())
-                all_label.append(y.detach().cpu().numpy())
-            else:
-                all_preds[0] = np.append(
-                    all_preds[0], preds.detach().cpu().numpy(), axis=0 )
-                all_label[0] = np.append(
-                    all_label[0], y.detach().cpu().numpy(), axis=0 )
-
-            if args.gradient_accumulation_steps > 1:
-                loss = loss / args.gradient_accumulation_steps
-            if args.fp16:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
-
-            if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item()*args.gradient_accumulation_steps)
-                if args.fp16:
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-                else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-                global_step += 1
-
-                epoch_iterator.set_description(
-                    "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, t_total, losses.val)
-                )
-                if args.local_rank in [-1, 0]:
-                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
-                    writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
-
-                if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
                     
-                    SAM_check = False #True
-                    if SAM_check:
-                        accuracy = valid(args, model, writer, test_loader, global_step, classifier)
-                    else:
-                        accuracy = valid(args, model, writer, test_loader, global_step)
-                        
-                    if best_acc < accuracy:
-                        save_model(args, model)
-                        best_acc = accuracy
-                        best_step = global_step
-                    logger.info("best accuracy so far: %f" % best_acc)
-                    logger.info("best accuracy in step: %f" % best_step)
-                    model.train()
-
-                if global_step % t_total == 0:
-                    break
-
-        all_preds, all_label = all_preds[0], all_label[0]
-        accuracy = simple_accuracy(all_preds, all_label)
-        accuracy = torch.tensor(accuracy).to(args.device)
-        dist.barrier()
-        train_accuracy = reduce_mean(accuracy, args.nprocs)
-        train_accuracy = train_accuracy.detach().cpu().numpy()
-
-        writer.add_scalar("train/accuracy", scalar_value=train_accuracy, global_step=global_step)
-
-        #wandb.log({"acc_train": train_accuracy})
-
-        logger.info("train accuracy so far: %f" % train_accuracy)
-        logger.info("best valid accuracy in step: %f" % best_step)
-        losses.reset()
-        if global_step % t_total == 0:
-            break
+    SAM_check = False #True
+    if SAM_check:
+        accuracy = valid(args, model, writer, test_loader, global_step, classifier)
+    else:
+        accuracy = valid(args, model, writer, test_loader, global_step)
 
     if args.local_rank in [-1, 0]:
         writer.close()
     end_time = time.time()
 
+    '''
     split_sep = args.split.split('_') #()
     print(split_sep)
 
@@ -551,10 +411,10 @@ def train(args, model, classifier=None, num_classes=None):
         f.write(res_args)
         f.write(res_newLine)
     # f.close()
-
-    logger.info("Best Accuracy: \t%f" % best_acc)
-    logger.info("Total Training Time: \t%f" % ((end_time - start_time) / 3600))
-    logger.info("End Training!")
+    '''
+    logger.info("Best Accuracy: \t%f" % accuracy)
+    logger.info("Total Testing Time: \t%f" % ((end_time - start_time) / 3600))
+    logger.info("End Testing!")
 
 
 def main():
